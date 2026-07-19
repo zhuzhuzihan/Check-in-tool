@@ -1,0 +1,12 @@
+.flutter-sdk/
+.dart_tool/
+.idea/
+.vscode/
+.env
+*.log
+
+backend/target/
+client/.dart_tool/
+client/build/
+client/android/local.properties
+client/ios/Flutter/ephemeral/

@@ -1,0 +1,134 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_TERM_COLOR: always
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: check_in
+          POSTGRES_USER: check_in
+          POSTGRES_PASSWORD: check_in_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U check_in -d check_in"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Format
+        run: cargo fmt --all -- --check
+        working-directory: backend
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: backend
+      - name: Unit tests
+        run: cargo test --locked
+        working-directory: backend
+      - name: API smoke test
+        working-directory: backend
+        env:
+          BIND_ADDR: 127.0.0.1:8080
+          DATABASE_URL: postgres://check_in:check_in_ci_password@127.0.0.1:5432/check_in
+          REDIS_URL: redis://127.0.0.1:6379/
+          JWT_SECRET: ci-jwt-secret-000000000000000000000000
+          DEVICE_ENROLLMENT_TOKEN: ci-device-token-000000000000000000000
+          ALLOW_DEV_AUTH: "true"
+          DEV_AUTH_SECRET: ci-dev-secret-0000000000000000000000
+          REJECT_EMULATORS: "true"
+          RATE_LIMIT_PER_MINUTE: 120
+        run: |
+          set -euo pipefail
+          cargo run --locked &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null
+
+          token_response=$(curl --fail --silent --request POST \
+            --header "x-dev-auth-secret: $DEV_AUTH_SECRET" \
+            http://127.0.0.1:8080/api/v1/auth/dev-token)
+          token=$(jq --raw-output '.data.token' <<<"$token_response")
+          test -n "$token"
+
+          fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          curl --fail --silent --request POST \
+            --header "authorization: Bearer $token" \
+            --header "x-device-enrollment-token: $DEVICE_ENROLLMENT_TOKEN" \
+            --header "content-type: application/json" \
+            --data "{\"device_fingerprint\":\"$fingerprint\",\"device_info\":{\"platform\":\"ci\",\"is_physical_device\":true}}" \
+            http://127.0.0.1:8080/api/v1/devices/trust >/dev/null
+
+          timestamp=$(date +%s%3N)
+          clock_in_body="{\"action\":\"clock_in\",\"request_id\":\"11111111-1111-4111-8111-111111111111\",\"device_fingerprint\":\"$fingerprint\",\"device_info\":{\"platform\":\"ci\",\"is_physical_device\":true},\"touch_duration_ms\":180,\"touch_distance_px\":2.5,\"touch_sample_count\":3,\"client_timestamp\":$timestamp}"
+          clock_in=$(curl --fail --silent --request POST \
+            --header "authorization: Bearer $token" \
+            --header "content-type: application/json" \
+            --data "$clock_in_body" \
+            http://127.0.0.1:8080/api/v1/attendance/clock)
+          jq --exit-status '.data.state == "on_duty"' <<<"$clock_in" >/dev/null
+
+          retry=$(curl --fail --silent --request POST \
+            --header "authorization: Bearer $token" \
+            --header "content-type: application/json" \
+            --data "$clock_in_body" \
+            http://127.0.0.1:8080/api/v1/attendance/clock)
+          jq --exit-status '.data.state == "on_duty"' <<<"$retry" >/dev/null
+
+          timestamp=$(date +%s%3N)
+          clock_out=$(curl --fail --silent --request POST \
+            --header "authorization: Bearer $token" \
+            --header "content-type: application/json" \
+            --data "{\"action\":\"clock_out\",\"request_id\":\"22222222-2222-4222-8222-222222222222\",\"device_fingerprint\":\"$fingerprint\",\"device_info\":{\"platform\":\"ci\",\"is_physical_device\":true},\"touch_duration_ms\":210,\"touch_distance_px\":1.0,\"touch_sample_count\":2,\"client_timestamp\":$timestamp}" \
+            http://127.0.0.1:8080/api/v1/attendance/clock)
+          jq --exit-status '.data.state == "off_duty"' <<<"$clock_out" >/dev/null

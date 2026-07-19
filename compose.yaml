@@ -1,0 +1,63 @@
+name: remote-clock-in
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: check_in
+      POSTGRES_USER: check_in
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-check-in-password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U check_in -d check_in"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://check_in:${POSTGRES_PASSWORD:-local-check-in-password}@postgres:5432/check_in
+      REDIS_URL: redis://redis:6379/
+      JWT_SECRET: ${JWT_SECRET:-local-jwt-secret-change-me-000000000000}
+      DEVICE_ENROLLMENT_TOKEN: ${DEVICE_ENROLLMENT_TOKEN:-local-device-enrollment-change-me-000000}
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000,http://127.0.0.1:3000}
+      TRUST_PROXY_HEADERS: "false"
+      REJECT_EMULATORS: ${REJECT_EMULATORS:-false}
+      REDIS_FAIL_CLOSED: "true"
+      RATE_LIMIT_PER_MINUTE: 120
+      ALLOW_DEV_AUTH: ${ALLOW_DEV_AUTH:-true}
+      DEV_AUTH_SECRET: ${DEV_AUTH_SECRET:-local-dev-auth-secret-change-me-00000000}
+      DEV_USER_ID: 1
+      DEV_DISPLAY_NAME: ${DEV_DISPLAY_NAME:-演示用户}
+      RUST_LOG: check_in_backend=info,tower_http=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres-data:
+  redis-data:

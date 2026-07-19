@@ -1,0 +1,51 @@
+name: Flutter CI
+
+on:
+  push:
+    paths:
+      - "client/**"
+      - ".github/workflows/flutter-ci.yml"
+  pull_request:
+    paths:
+      - "client/**"
+      - ".github/workflows/flutter-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: flutter-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.6
+          channel: stable
+          cache: true
+      - name: Resolve dependencies
+        run: flutter pub get
+        working-directory: client
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+        working-directory: client
+      - name: Analyze
+        run: flutter analyze --fatal-infos
+        working-directory: client
+      - name: Widget tests
+        run: flutter test --concurrency=1
+        working-directory: client
+      - name: Compile Android APK
+        run: flutter build apk --debug
+        working-directory: client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-clock-in-debug-apk
+          path: client/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
