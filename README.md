@@ -9,7 +9,7 @@
 ```text
 .
 ├── backend/              # Axum、SQLx、Redis、迁移与单元测试
-├── client/               # Flutter Android/iOS 客户端
+├── client/               # Flutter Android/iOS/Web 客户端
 ├── docs/                 # 设计依据与安全边界
 ├── compose.yaml          # PostgreSQL、Redis、后端本地环境
 └── .github/workflows/    # 后端集成测试与 Flutter APK 编译
@@ -18,6 +18,8 @@
 ## 快速预览前端
 
 未提供 `API_BASE_URL` 时，客户端自动进入演示数据模式，但点击打卡仍会调用真实系统生物识别。
+
+在线 Web Demo：[myweb.mczihan.link/Check-in-tool](https://myweb.mczihan.link/Check-in-tool/)。Web 端用于界面预览，不提供浏览器生物识别打卡。
 
 ```sh
 cd client

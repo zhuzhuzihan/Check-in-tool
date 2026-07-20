@@ -1,0 +1,11 @@
+{
+  "name": "Remote Clock-in",
+  "short_name": "Clock-in",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f9f9ff",
+  "theme_color": "#415f91",
+  "description": "Remote attendance Material 3 Expressive demo",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}
